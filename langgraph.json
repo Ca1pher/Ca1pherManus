@@ -1,0 +1,10 @@
+{
+  "dependencies": ["."],
+  "graphs": {
+    "agent": "./app/langgraph_core/graphs/main_graph.py:main_app_graph"
+  },
+  "http": {
+    "app": "./app/main.py:app"
+  },
+  "env": ".env"
+}

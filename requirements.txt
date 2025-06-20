@@ -1,0 +1,21 @@
+# requirements.txt
+
+# FastAPI 框架及其 ASGI 服务器
+fastapi
+uvicorn
+
+# LangChain 核心库，LangGraph 和 LangChain Agents 的基础
+langchain-core
+
+# OpenAI LLM 接口，如果你使用其他模型，可能需要替换为对应的 LangChain 集成包
+langchain-openai
+
+# Pydantic，用于数据验证和模型定义，LangChain/FastAPI 广泛使用
+# 确保安装 Pydantic V2 或更高版本，以避免兼容性问题
+pydantic>=2.0.0
+
+# 用于加载 .env 文件的工具
+python-dotenv
+
+# LangGraph 库本身
+langgraph

@@ -1,0 +1,8 @@
+2025-06-17 17:35:44,308 - uvicorn.error - INFO - Started server process [33092]
+2025-06-17 17:35:44,309 - uvicorn.error - INFO - Waiting for application startup.
+2025-06-17 17:35:44,310 - uvicorn.error - INFO - Application startup complete.
+2025-06-17 17:35:47,268 - main - INFO - root visit
+2025-06-17 17:35:47,270 - uvicorn.access - INFO - 127.0.0.1:57362 - "GET / HTTP/1.1" 200
+2025-06-17 17:41:29,846 - main - INFO - root visit
+2025-06-17 17:41:29,849 - uvicorn.access - INFO - 127.0.0.1:59136 - "GET / HTTP/1.1" 200
+2025-06-17 19:00:50,160 - app.main - INFO - root visit
