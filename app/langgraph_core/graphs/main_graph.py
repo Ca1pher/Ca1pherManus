@@ -1,5 +1,5 @@
 # app/langgraph_core/graphs/main_graph.py
-
+import logging
 from langgraph.graph import StateGraph, END
 from app.langgraph_core.state.graph_state import AgentState
 # 导入我们新定义的节点函数和路由函数
@@ -7,6 +7,8 @@ from app.langgraph_core.agents.main.supervisor_agent import supervisor_agent
 from app.langgraph_core.agents.main.planner_agent import planner_agent
 from app.langgraph_core.agents.main.other_worker_agent import other_worker_agent  # 导入 Other Worker Agent
 
+# 获取logger实例，使用 __name__ 可以自动根据模块路径命名 logger
+logger = logging.getLogger(__name__)
 
 # 路由函数 (根据 current_agent_role 决定流向)
 def route_to_agent(state: AgentState) -> str:
@@ -22,7 +24,7 @@ def route_to_agent(state: AgentState) -> str:
     elif role == "end_process":
         return END
 
-    print(f"Routing Error: Unknown role '{role}' or missing role in state: {state}")
+    logger.error(f"Routing Error: Unknown role '{role}' or missing role in state.")
     return END  # 异常情况下结束图
 
 
@@ -31,11 +33,11 @@ def build_main_graph():
 
     # 添加所有顶层图的节点
     workflow.add_node("supervisor_node", supervisor_agent)
-    print("DEBUG: main_graph.py: Added supervisor_node.")
+    logger.info("Added node 'supervisor_node'.")
     workflow.add_node("planner_node", planner_agent)
-    print("DEBUG: main_graph.py: Added planner_node.")
+    logger.info("Added node 'planner_node'.")
     workflow.add_node("other_worker_node", other_worker_agent)
-    print("DEBUG: main_graph.py: Added other_worker_node.")
+    logger.info("Added node 'other_worker_node'.")
 
     # 设置入口点为 Supervisor 节点
     workflow.set_entry_point("supervisor_node")

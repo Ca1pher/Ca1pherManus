@@ -78,3 +78,18 @@ def load_chat_prompt_template(agent_name: str, human_template_name: str, system_
 
     return ChatPromptTemplate.from_messages(messages)
 
+
+def load_prompt_template(relative_path: str) -> PromptTemplate:
+    """
+    Loads a single prompt file from the 'prompts' directory and creates a PromptTemplate.
+    :param relative_path: The relative path to the prompt file from within the 'prompts' directory.
+                          e.g., 'supervisor/plan_evaluation.md'
+    """
+    # __file__ is the path to utils.py, so we go up one level to get to the 'prompts' directory
+    base_prompts_dir = os.path.dirname(__file__)
+    full_path = os.path.join(base_prompts_dir, relative_path)
+
+    template_content = _load_file_content(full_path)
+
+    return PromptTemplate.from_template(template_content)
+

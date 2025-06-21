@@ -1,6 +1,6 @@
 # app/langgraph_core/agents/main/other_worker_agent.py
 
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 
