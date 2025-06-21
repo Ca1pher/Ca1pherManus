@@ -22,6 +22,8 @@ async def stream_langgraph_response(request: ChatRequest) -> AsyncGenerator[str,
         "active_subtask_id": None,
         "last_agent_role": None,
         "last_worker_result": None,
+        "plan_revision_count": 0,  # 初始化计划修订计数器
+        "task_revision_count": 0,  # 初始化任务修订计数器
         "tool_calls": None,
         "tool_output": None
     }

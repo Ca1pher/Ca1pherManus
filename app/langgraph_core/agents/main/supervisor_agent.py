@@ -14,6 +14,10 @@ from app.langgraph_core.prompts.utils import load_prompt_template
 plan_evaluation_prompt = load_prompt_template("supervisor/plan_evaluation.md")
 result_evaluation_prompt = load_prompt_template("supervisor/result_evaluation.md")
 
+# --- 在文件顶部定义最大重试次数配置 ---
+MAX_PLAN_REVISIONS = 2
+MAX_TASK_REVISIONS = 1
+
 logger = logging.getLogger(__name__)
 
 
@@ -60,15 +64,25 @@ def supervisor_agent(state: AgentState) -> dict:
             logger.info(f"Plan evaluation result: {evaluation}")
 
             if not evaluation.get("is_approved", False):
-                logger.warning("Plan rejected. Sending back to Planner with feedback.")
-                return {
-                    "messages": [AIMessage(content=evaluation.get("feedback", "No feedback provided."))],
-                    "current_agent_role": "planner",
-                    "last_agent_role": "supervisor"
-                }
+                # --- 新增：计划重试计数和检查 ---
+                current_revisions = state.get("plan_revision_count", 0) + 1
+                logger.warning(f"Plan rejected. Revision count: {current_revisions}/{MAX_PLAN_REVISIONS}.")
+
+                if current_revisions > MAX_PLAN_REVISIONS:
+                    logger.error("Maximum plan revisions reached. Forcibly approving the last plan to proceed.")
+                    # 强制接受，让流程继续，而不是终止
+                    state["plan_revision_count"] = 0 # 重置计数器
+                    # 此处不返回，让代码继续向下执行到任务分配逻辑
+                else:
+                    return {
+                        "messages": [AIMessage(content=evaluation.get("feedback", "No feedback provided."))],
+                        "plan_revision_count": current_revisions, # 更新计数
+                        "current_agent_role": "planner",
+                        "last_agent_role": "supervisor"
+                    }
             
-            logger.info("Plan approved. Finding next task to execute.")
-            # 计划批准后，直接进入分配任务的逻辑（复用场景3的部分逻辑）
+            logger.info("Plan approved. Resetting plan revision count and proceeding to execution.")
+            state["plan_revision_count"] = 0
         except (json.JSONDecodeError, KeyError) as e:
             logger.error(f"Failed to parse plan evaluation: {e}. Raw content: '{llm_response.content}'")
             return {"current_agent_role": "end_process", "last_agent_role": "supervisor"}
@@ -97,15 +111,26 @@ def supervisor_agent(state: AgentState) -> dict:
             logger.info(f"Result evaluation: {evaluation}")
 
             if not evaluation.get("is_satisfactory", False):
-                logger.warning(f"Result for task '{active_task['id']}' is not satisfactory. Re-assigning to worker with feedback.")
-                return {
-                    "messages": [AIMessage(content=evaluation.get("feedback", "Result was not satisfactory."))],
-                    "current_agent_role": "other_worker", # 再次分配给工人
-                    "last_agent_role": "supervisor"
-                    # active_subtask_id 和 overall_plan 保持不变
-                }
+                current_revisions = state.get("task_revision_count", 0) + 1
+                logger.warning(f"Result for task '{active_task['id']}' not satisfactory. Revision count: {current_revisions}/{MAX_TASK_REVISIONS}.")
 
-            logger.info(f"Result for task '{active_task['id']}' is satisfactory. Marking as completed.")
+                if current_revisions > MAX_TASK_REVISIONS:
+                    logger.error(f"Maximum revisions for task '{active_task['id']}' reached. Forcibly accepting the last result.")
+                    # 强制接受，标记任务为完成，然后继续
+                    state["task_revision_count"] = 0 # 重置计数器
+                    active_task["status"] = "completed"
+                    active_task["result"] = state.get("last_worker_result", "Result forcibly accepted after max revisions.")
+                    # 此处不返回，让代码继续向下执行到下一个任务分配逻辑
+                else:
+                    return {
+                        "messages": [AIMessage(content=evaluation.get("feedback", "Result was not satisfactory."))],
+                        "task_revision_count": current_revisions, # 更新计数
+                        "current_agent_role": "other_worker",
+                        "last_agent_role": "supervisor"
+                    }
+
+            logger.info(f"Result for task '{active_task['id']}' is satisfactory. Resetting task revision count and marking as completed.")
+            state["task_revision_count"] = 0
             active_task["status"] = "completed"
             active_task["result"] = state.get("last_worker_result")
 
@@ -123,10 +148,13 @@ def supervisor_agent(state: AgentState) -> dict:
 
     if next_pending_task:
         logger.info(f"Found next pending task: '{next_pending_task['description']}'. Activating and assigning to Worker.")
+        # --- 新增：分配新任务前，确保任务计数器已清零 ---
+        state["task_revision_count"] = 0 
         next_pending_task["status"] = "active"
         return {
             "overall_plan": overall_plan,
             "active_subtask_id": next_pending_task["id"],
+            "task_revision_count": 0, # 显式返回清零后的状态
             "current_agent_role": "other_worker",
             "last_agent_role": "supervisor"
         }

@@ -22,6 +22,8 @@ class AgentState(TypedDict):
     current_agent_role: Optional[str] # 当前活跃的代理角色 (e.g., "supervisor", "planner", "other_worker")
     last_agent_role: Optional[str] # 上一个执行的代理角色，用于路由判断
     last_worker_result: Optional[str] # Other Worker 返回的结果
+    plan_revision_count: int  # 计划被修改的次数
+    task_revision_count: int  # 单个子任务被修改的次数
     # tool_calls 和 tool_output 暂时保留，以防未来需要
     tool_calls: Optional[List[dict]]
     tool_output: Optional[str]
