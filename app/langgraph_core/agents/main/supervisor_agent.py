@@ -2,158 +2,143 @@
 
 import json
 import logging
-from typing import Dict, Any, List, Optional  # 确保导入 Optional
-from langchain_core.messages import AIMessage, HumanMessage, BaseMessage
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from typing import Dict, Any, List, Optional
+from langchain_core.messages import AIMessage
+from langchain_core.prompts import ChatPromptTemplate
 
 from app.langgraph_core.state.graph_state import AgentState, Plan, SubTask
 from app.llms.reasoning_models import supervisor_llm
 from app.langgraph_core.prompts.utils import load_prompt_template
 
-# 加载新的评估 Prompt
+# --- 加载所有需要的 Supervisor Prompts ---
 plan_evaluation_prompt = load_prompt_template("supervisor/plan_evaluation.md")
+result_evaluation_prompt = load_prompt_template("supervisor/result_evaluation.md")
 
-# 获取logger实例，使用 __name__ 可以自动根据模块路径命名 logger
 logger = logging.getLogger(__name__)
 
 
-def supervisor_agent(state: AgentState) -> AgentState:
+def _find_subtask_by_id(plan: Dict[str, Any], task_id: str) -> Optional[Dict[str, Any]]:
+    """Helper function to find a subtask dictionary by its ID in the plan."""
+    for task in plan.get("steps", []):
+        if task.get("id") == task_id:
+            return task
+    return None
+
+def supervisor_agent(state: AgentState) -> dict:
     logger.info("--- Agent: Supervisor ---")
-    messages = state["messages"]
+    
     current_request = state.get("current_request")
     overall_plan = state.get("overall_plan")
     last_agent_role = state.get("last_agent_role")
 
-    logger.info(f"Supervisor state on entry: last_agent_role='{last_agent_role}', current_request exists: {bool(current_request)}, plan exists: {bool(overall_plan)}")
+    logger.info(f"Supervisor state: last_role='{last_agent_role}', plan_exists={bool(overall_plan and overall_plan.get('steps'))}, active_task_id='{state.get('active_subtask_id')}'")
 
-    # 场景1: 首次接收用户请求 (入口点)
+    # 场景1: 首次请求，路由给 Planner
     if not current_request:
-        user_message_content = messages[-1].content if messages else ""
-        logger.info(f"Scenario 1: Initial request received. User message: '{user_message_content}'.")
-        return {"current_request": user_message_content, "current_agent_role": "planner",
-                "last_agent_role": "supervisor"}
+        logger.info("Scenario 1: Initial request. Routing to Planner.")
+        return {
+            "current_request": state["messages"][-1].content,
+            "current_agent_role": "planner",
+            "last_agent_role": "supervisor"
+        }
 
-    # 场景2: 接收到 Planner 的计划
-    elif overall_plan and state.get("current_agent_role") == "supervisor" and last_agent_role == "planner":
-        logger.info("Scenario 2: Received plan from Planner. Evaluating plan...")
-
-        # --- 新增：调用 LLM 评估计划 ---
-        prompt_str = plan_evaluation_prompt.format(
+    # 场景2: 从 Planner 处收到计划，进行评估
+    if last_agent_role == "planner":
+        logger.info("Scenario 2: Received plan from Planner. Evaluating...")
+        prompt = plan_evaluation_prompt.format(
             user_request=current_request,
             plan=json.dumps(overall_plan, indent=2, ensure_ascii=False)
         )
-        logger.info("Formatted evaluation prompt. Preparing to call LLM...")
-        
-        # 将格式化后的字符串包装在 ChatPromptTemplate 中，或者直接作为字符串传递
-        # 直接传递字符串更简单
-        llm_response = supervisor_llm.invoke(prompt_str, response_format={"type": "json_object"})
+        llm_response = supervisor_llm.invoke(prompt, response_format={"type": "json_object"})
         
         try:
-            evaluation = json.loads(llm_response.content)
+            raw_content = llm_response.content
+            json_start_index = raw_content.find('{')
+            json_end_index = raw_content.rfind('}') + 1
+            json_str = raw_content[json_start_index:json_end_index]
+            evaluation = json.loads(json_str)
             logger.info(f"Plan evaluation result: {evaluation}")
 
             if not evaluation.get("is_approved", False):
-                feedback = evaluation.get("feedback", "The plan was rejected without specific feedback.")
-                logger.warning(f"Plan rejected. Feedback: {feedback}")
-                # 计划被否决，将反馈信息放入消息列表，让planer重新生成计划
+                logger.warning("Plan rejected. Sending back to Planner with feedback.")
                 return {
-                    "messages": [AIMessage(content=f"Supervisor Feedback: {feedback}")],
+                    "messages": [AIMessage(content=evaluation.get("feedback", "No feedback provided."))],
                     "current_agent_role": "planner",
                     "last_agent_role": "supervisor"
                 }
+            
+            logger.info("Plan approved. Finding next task to execute.")
+            # 计划批准后，直接进入分配任务的逻辑（复用场景3的部分逻辑）
+        except (json.JSONDecodeError, KeyError) as e:
+            logger.error(f"Failed to parse plan evaluation: {e}. Raw content: '{llm_response.content}'")
+            return {"current_agent_role": "end_process", "last_agent_role": "supervisor"}
 
-            logger.info("Plan approved. Proceeding to execution.")
-            # 如果计划被批准，继续原有的逻辑
-        except json.JSONDecodeError as e:
-            error_message = f"Failed to decode LLM evaluation. Error: {e}. Raw content: '{llm_response.content}'"
-            logger.error(error_message)
-            return {
-                "messages": [AIMessage(content=f"Supervisor: {error_message}")],
-                "current_agent_role": "end_process",
-                "last_agent_role": "supervisor"
-            }
-        # --- 评估结束 ---
+    # 场景3: 从 Worker 处收到结果，或从 Planner 处收到批准的计划后，决定下一步
+    if last_agent_role == "other_worker":
+        logger.info(f"Scenario 3: Received result from Worker for task '{state.get('active_subtask_id')}'. Evaluating result...")
+        active_task = _find_subtask_by_id(overall_plan, state.get("active_subtask_id"))
+        if not active_task:
+             logger.error(f"Logic error: Could not find active task with ID '{state.get('active_subtask_id')}'")
+             return {"current_agent_role": "end_process"}
 
-        # 增加对 overall_plan 结构的检查
-        if not isinstance(overall_plan, dict) or "steps" not in overall_plan or not isinstance(overall_plan["steps"],
-                                                                                               list):
-            logger.error("Error: overall_plan is not in expected format.")
-            return {"messages": [AIMessage(content="Supervisor: Internal error: Plan format invalid.")],
-                    "current_agent_role": "end_process", "last_agent_role": "supervisor"}
+        prompt = result_evaluation_prompt.format(
+            user_request=current_request,
+            subtask_description=active_task["description"],
+            worker_result=state.get("last_worker_result", "")
+        )
+        llm_response = supervisor_llm.invoke(prompt, response_format={"type": "json_object"})
+        
+        try:
+            raw_content = llm_response.content
+            json_start_index = raw_content.find('{')
+            json_end_index = raw_content.rfind('}') + 1
+            json_str = raw_content[json_start_index:json_end_index]
+            evaluation = json.loads(json_str)
+            logger.info(f"Result evaluation: {evaluation}")
 
-        if not overall_plan["steps"]:
-            response_message = "Planner could not generate a plan or generated an empty one. Please refine your request."
-            logger.warning(response_message)
-            return {"messages": [AIMessage(content=f"Supervisor: {response_message}")], "current_agent_role": "end_process",
-                    "last_agent_role": "supervisor"}
+            if not evaluation.get("is_satisfactory", False):
+                logger.warning(f"Result for task '{active_task['id']}' is not satisfactory. Re-assigning to worker with feedback.")
+                return {
+                    "messages": [AIMessage(content=evaluation.get("feedback", "Result was not satisfactory."))],
+                    "current_agent_role": "other_worker", # 再次分配给工人
+                    "last_agent_role": "supervisor"
+                    # active_subtask_id 和 overall_plan 保持不变
+                }
 
-        active_subtask: Optional[SubTask] = None  # 明确初始化并类型提示
-        next_subtask: Optional[SubTask] = None  # 明确初始化并类型提示
-        # 当前激活的子任务并检查结果是否与子任务提问匹配
-        logger.info(f"Searching for active and next subtasks in plan with {len(overall_plan['steps'])} steps.")
-        for subtask in overall_plan["steps"]:
-            if subtask["status"] == "active":
-                active_subtask = subtask
-            if subtask["status"] == "pending":
-                next_subtask = subtask
-                break
+            logger.info(f"Result for task '{active_task['id']}' is satisfactory. Marking as completed.")
+            active_task["status"] = "completed"
+            active_task["result"] = state.get("last_worker_result")
 
-        if active_subtask:
-            logger.info(f"Active subtask '{active_subtask['description']}' found.")
-            # 拿任务历史，当前任务和本次任务结果，评估结果是否采纳并记录原因
+        except (json.JSONDecodeError, KeyError) as e:
+            logger.error(f"Failed to parse result evaluation: {e}. Raw content: '{llm_response.content}'")
+            return {"current_agent_role": "end_process", "last_agent_role": "supervisor"}
 
-        if next_subtask:
-            logger.info(f"Assigning next subtask '{next_subtask['description']}' to Other Worker.")
-            # 问题可能在这里：返回的 current_agent_role 应该是什么？
-            # 如果要路由到 other_worker_node，那么 current_agent_role 应该设置为 "other_worker"
-            return {"active_subtask_id": next_subtask["id"], "current_agent_role": "other_worker",
-                    "last_agent_role": "supervisor", "overall_plan": overall_plan}  # 确保 overall_plan 也被传递
-        else:
-            # 所有子任务都已完成
-            final_report = "All tasks completed. Here is the summary:\n"
-            for subtask in overall_plan["steps"]:
-                final_report += f"- {subtask['description']}: {subtask['result']}\n"
-            logger.info(final_report)
-            # 如果所有任务都完成了，并且要结束流程，那么 current_agent_role 应该设置为 "end_process"
-            return {"messages": [AIMessage(content=f"Supervisor: {final_report}")], "current_agent_role": "end_process",
-                    "last_agent_role": "supervisor"}
-    # 场景3: 接收到非planner的结果
+    # --- 任务分配逻辑 (场景2批准后和场景3完成后都会进入这里) ---
+    logger.info("Entering task assignment logic...")
+    next_pending_task = None
+    for task in overall_plan.get("steps", []):
+        if task.get("status") == "pending":
+            next_pending_task = task
+            break
+
+    if next_pending_task:
+        logger.info(f"Found next pending task: '{next_pending_task['description']}'. Activating and assigning to Worker.")
+        next_pending_task["status"] = "active"
+        return {
+            "overall_plan": overall_plan,
+            "active_subtask_id": next_pending_task["id"],
+            "current_agent_role": "other_worker",
+            "last_agent_role": "supervisor"
+        }
     else:
-        logger.info("Scenario 3: Received result from Others.")
-        # 增加对 overall_plan 结构的检查
-        if not isinstance(overall_plan, dict) or "steps" not in overall_plan or not isinstance(overall_plan["steps"],
-                                                                                               list):
-            logger.error("Error: overall_plan is not in expected format.")
-            return {"messages": [AIMessage(content="Supervisor: Internal error: Plan format invalid.")],
-                    "current_agent_role": "end_process", "last_agent_role": "supervisor"}
-
-        if not overall_plan["steps"]:
-            response_message = "Planner could not generate a plan or generated an empty one. Please refine your request."
-            logger.warning(response_message)
-            return {"messages": [AIMessage(content=f"Supervisor: {response_message}")], "current_agent_role": "end_process",
-                    "last_agent_role": "supervisor"}
-
-        next_subtask: Optional[SubTask] = None  # 明确初始化并类型提示
-        logger.info(f"Searching for pending subtasks in plan with {len(overall_plan['steps'])} steps.")
-        for subtask in overall_plan["steps"]:
-            if subtask["status"] == "pending":
-                next_subtask = subtask
-                break
-
-        if next_subtask:
-            logger.info(f"Assigning next subtask '{next_subtask['description']}' to Other Worker.")
-            # 问题可能在这里：返回的 current_agent_role 应该是什么？
-            # 如果要路由到 other_worker_node，那么 current_agent_role 应该设置为 "other_worker"
-            return {"active_subtask_id": next_subtask["id"], "current_agent_role": "other_worker",
-                    "last_agent_role": "supervisor", "overall_plan": overall_plan}  # 确保 overall_plan 也被传递
-        else:
-            # 所有子任务都已完成
-            final_report = "All tasks completed. Here is the summary:\n"
-            for subtask in overall_plan["steps"]:
-                final_report += f"- {subtask['description']}: {subtask['result']}\n"
-            logger.info(final_report)
-            # 如果所有任务都完成了，并且要结束流程，那么 current_agent_role 应该设置为 "end_process"
-            return {"messages": [AIMessage(content=f"Supervisor: {final_report}")], "current_agent_role": "end_process",
-                    "last_agent_role": "supervisor"}
+        logger.info("All tasks are completed. Finalizing process.")
+        final_report = "All tasks completed. Here is the summary:\n"
+        for task in overall_plan.get("steps", []):
+            final_report += f"- {task.get('description')}: {task.get('result')}\n"
+        return {
+            "messages": [AIMessage(content=final_report)],
+            "current_agent_role": "end_process",
+            "last_agent_role": "supervisor"
+        }
 
 
