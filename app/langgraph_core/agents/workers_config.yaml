@@ -1,0 +1,22 @@
+# 智能体工人团队的配置文件
+# 系统将根据此文件动态加载工人和对应的工具
+
+workers:
+  - name: other_worker
+    handler_function: "app.langgraph_core.agents.main.other_worker_agent.other_worker_node"
+    tools: [] # 通用工人可能依赖更强的LLM而不是特定工具
+
+# 定义所有可用工具的详细信息
+# 这使得每个工人可以按名字引用工具，而工具的实现细节在这里统一定义
+tools:
+  web_search:
+    # 对应的工具函数实现
+    implementation: "app.langgraph_core.tools.common_tools.web_search_tool" 
+  news_fetcher:
+    implementation: "app.langgraph_core.tools.common_tools.news_fetcher_tool"
+  read_file:
+    implementation: "app.langgraph_core.tools.common_tools.read_file_tool"
+  write_file:
+    implementation: "app.langgraph_core.tools.common_tools.write_file_tool"
+  python_repl:
+    implementation: "app.langgraph_core.tools.common_tools.python_repl_tool" 

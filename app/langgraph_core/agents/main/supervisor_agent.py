@@ -9,10 +9,12 @@ from langchain_core.prompts import ChatPromptTemplate
 from app.langgraph_core.state.graph_state import AgentState, Plan, SubTask
 from app.llms.reasoning_models import supervisor_llm
 from app.langgraph_core.prompts.utils import load_prompt_template
+from app.langgraph_core.agents.config_loader import WORKERS_CONFIG
 
 # --- 加载所有需要的 Supervisor Prompts ---
 plan_evaluation_prompt = load_prompt_template("supervisor/plan_evaluation.md")
 result_evaluation_prompt = load_prompt_template("supervisor/result_evaluation.md")
+final_summary_prompt = load_prompt_template("supervisor/final_summary.md")
 
 # --- 在文件顶部定义最大重试次数配置 ---
 MAX_PLAN_REVISIONS = 2
@@ -27,6 +29,37 @@ def _find_subtask_by_id(plan: Dict[str, Any], task_id: str) -> Optional[Dict[str
         if task.get("id") == task_id:
             return task
     return None
+
+def _validate_and_correct_plan(plan: Plan) -> (Plan, bool):
+    """
+    校验并修正计划的合法性。
+    1. 检查每个步骤是否有 'assigned_to' 字段，如果没有则分配给兜底工人。
+    2. 检查 'assigned_to' 的值是否是已知的工人，如果不是则分配给兜底工人。
+    返回修正后的计划和一个布尔值，表示计划是否被修正过。
+    """
+    was_corrected = False
+    available_worker_names = {worker['name'] for worker in WORKERS_CONFIG.get('workers', [])}
+    if not available_worker_names:
+        logger.error("致命错误：系统中没有配置任何工人 (Workers)。")
+        return plan, True # 返回未修改的计划，并标记为已"修正"以阻止流程
+
+    steps = plan.get("steps", [])
+    if not steps:
+        # 这是一个无效计划，但我们让上游的 LLM 评估来处理它
+        return plan, False
+
+    for i, task in enumerate(steps):
+        assignee = task.get("assigned_to")
+        if not assignee:
+            logger.warning(f"计划修正：第 {i+1} 步任务 '{task.get('description')}' 没有指定执行人。自动分配给 other_worker。")
+            task["assigned_to"] = "other_worker"
+            was_corrected = True
+        elif assignee not in available_worker_names:
+            logger.warning(f"计划修正：第 {i+1} 步任务指定了不存在的工人 '{assignee}'。自动重新分配给 other_worker。")
+            task["assigned_to"] = "other_worker"
+            was_corrected = True
+    
+    return plan, was_corrected
 
 def supervisor_agent(state: AgentState) -> dict:
     logger.info("--- Agent: Supervisor ---")
@@ -49,9 +82,18 @@ def supervisor_agent(state: AgentState) -> dict:
     # 场景2: 从 Planner 处收到计划，进行评估
     if last_agent_role == "planner":
         logger.info("Scenario 2: Received plan from Planner. Evaluating...")
+
+        # --- 修改：进行结构合法性校验和自动修正 ---
+        corrected_plan, was_corrected = _validate_and_correct_plan(overall_plan)
+        if was_corrected:
+            logger.info("Plan has been auto-corrected by the supervisor.")
+            # 更新状态中的计划
+            state["overall_plan"] = corrected_plan
+        
+        # 即使修正了，也继续进行 LLM 评估，因为计划的逻辑可能仍然有问题
         prompt = plan_evaluation_prompt.format(
             user_request=current_request,
-            plan=json.dumps(overall_plan, indent=2, ensure_ascii=False)
+            plan=json.dumps(corrected_plan, indent=2, ensure_ascii=False) # 使用修正后的计划进行评估
         )
         llm_response = supervisor_llm.invoke(prompt, response_format={"type": "json_object"})
         
@@ -90,7 +132,7 @@ def supervisor_agent(state: AgentState) -> dict:
     # 场景3: 从 Worker 处收到结果，或从 Planner 处收到批准的计划后，决定下一步
     if last_agent_role == "other_worker":
         logger.info(f"Scenario 3: Received result from Worker for task '{state.get('active_subtask_id')}'. Evaluating result...")
-        active_task = _find_subtask_by_id(overall_plan, state.get("active_subtask_id"))
+        active_task = _find_subtask_by_id(overall_plan, state.get('active_subtask_id'))
         if not active_task:
              logger.error(f"Logic error: Could not find active task with ID '{state.get('active_subtask_id')}'")
              return {"current_agent_role": "end_process"}
@@ -142,12 +184,13 @@ def supervisor_agent(state: AgentState) -> dict:
     logger.info("Entering task assignment logic...")
     next_pending_task = None
     for task in overall_plan.get("steps", []):
-        if task.get("status") == "pending":
+        if task.get("status") is None or task.get("status") == "pending":
             next_pending_task = task
             break
 
     if next_pending_task:
-        logger.info(f"Found next pending task: '{next_pending_task['description']}'. Activating and assigning to Worker.")
+        assignee = next_pending_task.get("assigned_to")
+        logger.info(f"Found next pending task: '{next_pending_task['description']}'. Activating and assigning to '{assignee}'.")
         # --- 新增：分配新任务前，确保任务计数器已清零 ---
         state["task_revision_count"] = 0 
         next_pending_task["status"] = "active"
@@ -155,18 +198,41 @@ def supervisor_agent(state: AgentState) -> dict:
             "overall_plan": overall_plan,
             "active_subtask_id": next_pending_task["id"],
             "task_revision_count": 0, # 显式返回清零后的状态
-            "current_agent_role": "other_worker",
+            "current_agent_role": assignee, # <-- 关键修改：路由到具体的工人
             "last_agent_role": "supervisor"
         }
     else:
-        logger.info("All tasks are completed. Finalizing process.")
-        final_report = "All tasks completed. Here is the summary:\n"
-        for task in overall_plan.get("steps", []):
-            final_report += f"- {task.get('description')}: {task.get('result')}\n"
-        return {
-            "messages": [AIMessage(content=final_report)],
-            "current_agent_role": "end_process",
-            "last_agent_role": "supervisor"
-        }
+        # --- 2. 重写最终报告生成逻辑 ---
+        logger.info("All tasks are completed. Invoking LLM for final summary.")
+        
+        try:
+            # 准备上下文
+            plan_and_results_json = json.dumps(overall_plan, indent=2, ensure_ascii=False)
+            
+            # 格式化 Prompt
+            summary_prompt_str = final_summary_prompt.format(
+                user_request=current_request,
+                plan_and_results=plan_and_results_json
+            )
+            
+            # 调用 LLM 生成最终报告
+            final_response = supervisor_llm.invoke(summary_prompt_str)
+            final_report = final_response.content
+            
+            logger.info(f"Generated final report: {final_report}")
+
+            return {
+                "messages": [AIMessage(content=final_report)],
+                "current_agent_role": "end_process",
+                "last_agent_role": "supervisor"
+            }
+        except Exception as e:
+            logger.error(f"Failed to generate final summary: {e}", exc_info=True)
+            # 发生错误时，返回一个标准的错误信息
+            return {
+                "messages": [AIMessage(content=f"An error occurred while generating the final report: {e}")],
+                "current_agent_role": "end_process",
+                "last_agent_role": "supervisor"
+            }
 
 

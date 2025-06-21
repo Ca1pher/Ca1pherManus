@@ -19,3 +19,6 @@ python-dotenv
 
 # LangGraph 库本身
 langgraph
+
+# 用于解析 YAML 配置文件
+PyYAML

@@ -16,7 +16,7 @@ worker_prompt_template = load_chat_prompt_template(
     # 暂时不使用 few_shot_examples
 )
 
-def other_worker_agent(state: AgentState) -> AgentState:
+def other_worker_node(state: AgentState) -> AgentState:
     print("\n--- Agent: Other Worker ---")
     active_subtask_id = state.get("active_subtask_id")
     overall_plan = state.get("overall_plan")
