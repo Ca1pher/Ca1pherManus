@@ -20,6 +20,8 @@ origins = [
     "http://localhost",
     "http://localhost:8000", # 你的 FastAPI 应用运行的地址
     "http://127.0.0.1:8000",
+    "http://localhost:5173", # 你的前端服务地址
+    "http://127.0.0.1:5173", # 前端服务的 IP 地址版本
     # 如果你的 HTML 文件是从文件系统直接打开的 (file:// )，或者从其他端口提供服务，
     # 你可能需要添加这些源。在生产环境中，请精确列出你的前端域名。
     "null", # 对于 file:// 协议，浏览器会发送 "Origin: null"

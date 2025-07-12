@@ -1,10 +1,120 @@
 [
   {
     "input": "帮我组织一次团队建设活动。",
-    "output": "1. 确定活动主题和目标。\n2. 设定预算和时间。\n3. 筛选活动场地和供应商。\n4. 制定详细活动流程。\n5. 邀请团队成员并确认参与。\n6. 准备活动所需物资。\n7. 执行活动并收集反馈。"
+    "output": {
+      "steps": [
+        {
+          "task_id": "1",
+          "task_name": "确定活动主题和目标",
+          "description": "明确团队建设活动的主题和目标，确保活动能够达到预期效果",
+          "worker": "other_worker",
+          "estimated_time": "2小时",
+          "dependencies": []
+        },
+        {
+          "task_id": "2", 
+          "task_name": "设定预算和时间",
+          "description": "制定合理的预算计划，确定活动时间安排",
+          "worker": "other_worker",
+          "estimated_time": "1小时",
+          "dependencies": ["1"]
+        },
+        {
+          "task_id": "3",
+          "task_name": "筛选活动场地和供应商",
+          "description": "选择合适的活动场地，联系并确认供应商服务",
+          "worker": "other_worker",
+          "estimated_time": "4小时",
+          "dependencies": ["2"]
+        },
+        {
+          "task_id": "4",
+          "task_name": "制定详细活动流程",
+          "description": "设计完整的活动流程，包括时间安排和具体环节",
+          "worker": "other_worker",
+          "estimated_time": "3小时",
+          "dependencies": ["3"]
+        },
+        {
+          "task_id": "5",
+          "task_name": "邀请团队成员并确认参与",
+          "description": "发送活动邀请，统计参与人数，做好人员安排",
+          "worker": "other_worker",
+          "estimated_time": "2小时",
+          "dependencies": ["4"]
+        },
+        {
+          "task_id": "6",
+          "task_name": "准备活动所需物资",
+          "description": "采购和准备活动所需的各类物资和设备",
+          "worker": "other_worker",
+          "estimated_time": "6小时",
+          "dependencies": ["5"]
+        },
+        {
+          "task_id": "7",
+          "task_name": "执行活动并收集反馈",
+          "description": "按计划执行团队建设活动，收集参与者反馈",
+          "worker": "other_worker",
+          "estimated_time": "8小时",
+          "dependencies": ["6"]
+        }
+      ]
+    }
   },
   {
     "input": "写一篇关于人工智能发展趋势的报告。",
-    "output": "1. 确定报告主题和受众。\n2. 收集最新人工智能发展资料。\n3. 分析数据并提炼核心趋势。\n4. 撰写报告草稿。\n5. 审阅并修改报告。\n6. 准备报告演示文稿。"
+    "output": {
+      "steps": [
+        {
+          "task_id": "1",
+          "task_name": "确定报告主题和受众",
+          "description": "明确报告的具体主题和目标受众，确定报告的重点方向",
+          "worker": "other_worker",
+          "estimated_time": "1小时",
+          "dependencies": []
+        },
+        {
+          "task_id": "2",
+          "task_name": "收集最新人工智能发展资料",
+          "description": "搜集最新的AI技术发展资料、研究报告和行业动态",
+          "worker": "other_worker",
+          "estimated_time": "8小时",
+          "dependencies": ["1"]
+        },
+        {
+          "task_id": "3",
+          "task_name": "分析数据并提炼核心趋势",
+          "description": "对收集的资料进行深入分析，识别和提炼核心发展趋势",
+          "worker": "other_worker",
+          "estimated_time": "6小时",
+          "dependencies": ["2"]
+        },
+        {
+          "task_id": "4",
+          "task_name": "撰写报告草稿",
+          "description": "根据分析结果撰写报告初稿，包括结构化的内容组织",
+          "worker": "other_worker",
+          "estimated_time": "12小时",
+          "dependencies": ["3"]
+        },
+        {
+          "task_id": "5",
+          "task_name": "审阅并修改报告",
+          "description": "对报告进行审阅和修改，确保内容准确性和逻辑性",
+          "worker": "other_worker",
+          "estimated_time": "4小时",
+          "dependencies": ["4"]
+        },
+        {
+          "task_id": "6",
+          "task_name": "准备报告演示文稿",
+          "description": "制作配套的演示文稿，用于报告展示和汇报",
+          "worker": "other_worker",
+          "estimated_time": "6小时",
+          "dependencies": ["5"]
+        }
+      ]
+    }
   }
 ]

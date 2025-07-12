@@ -20,7 +20,7 @@
     ```
     {available_workers}
     ```
-3.  **输出格式**: 你的新计划输出必须是一个遵循特定JSON格式的计划。每个步骤都必须包含一个 `id` 字段（例如 "task_1", "task_2"），一个 `description` 字段，以及一个 `assigned_to` 字段，其值必须是上面"可用工人列表"中某个工人的 `name`。
+3.  **输出格式**: 你的新计划输出必须是一个遵循特定JSON格式的计划。每个步骤都必须包含一个 `task_id` 字段（例如 "1", "2"），一个 `task_name` 字段，一个 `description` 字段，一个 `worker` 字段，一个 `estimated_time` 字段，以及一个 `dependencies` 字段，其值必须是上面"可用工人列表"中某个工人的 `name`。
 
 # 输出格式
 你的输出必须是严格遵循我们之前约定的、包含`steps`列表的JSON格式。

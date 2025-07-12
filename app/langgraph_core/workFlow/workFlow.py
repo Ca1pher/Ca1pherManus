@@ -1,4 +1,4 @@
-# app/langgraph_core/graphs/main_graph.py
+# app/langgraph_core/graphs/main_workFlow.py
 import logging
 import importlib
 from langgraph.graph import StateGraph, END
@@ -16,7 +16,18 @@ def _find_active_task(state: AgentState) -> SubTask | None:
     active_task_id = state.get("active_subtask_id")
     if not active_task_id:
         return None
-    for task in state.get("overall_plan", {}).get("steps", []):
+    
+    overall_plan = state.get("overall_plan", {})
+    if not isinstance(overall_plan, dict):
+        logger.error(f"overall_plan is not a dict: {type(overall_plan)}")
+        return None
+    
+    steps = overall_plan.get("steps", [])
+    if not isinstance(steps, list):
+        logger.error(f"steps is not a list: {type(steps)}")
+        return None
+    
+    for task in steps:
         if task.get("task_id") == active_task_id:
             return task
     return None
@@ -33,6 +44,8 @@ def import_from_string(path: str):
 
 # 路由函数
 def route_to_agent(state: AgentState) -> str:
+    logger.info(f"Routing function called with state: {state}")
+    
     # 场景1：如果 supervisor 决定分配任务，则根据任务的 worker 路由
     active_task = _find_active_task(state)
     if active_task and active_task.get("status") == "active":
@@ -46,11 +59,16 @@ def route_to_agent(state: AgentState) -> str:
             
     # 场景2：其他情况，根据 current_agent_role 路由
     role = state.get("current_agent_role")
+    logger.info(f"Routing based on current_agent_role: '{role}'")
+    
     if role == "planner":
+        logger.info("Routing to planner")
         return "planner"
     elif role == "supervisor":
+        logger.info("Routing to supervisor")
         return "supervisor"
     elif role == "end_process":
+        logger.info("Ending process")
         return END
 
     logger.error(f"Routing Error: Unknown role '{role}' or state. Cannot determine next step.")

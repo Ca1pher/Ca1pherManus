@@ -28,7 +28,7 @@ def other_worker_node(state: AgentState) -> AgentState:
     # 找到当前活跃的子任务
     current_subtask: Optional[SubTask] = None
     for subtask in overall_plan["steps"]:
-        if subtask["id"] == active_subtask_id:
+        if subtask["task_id"] == active_subtask_id:
             current_subtask = subtask
             break
 

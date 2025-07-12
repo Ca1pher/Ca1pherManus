@@ -5,10 +5,13 @@ from typing import Annotated, List, TypedDict, Optional, Dict, Any
 from langchain_core.messages import BaseMessage
 
 class SubTask(TypedDict):
-    id: str
+    task_id: str
+    task_name: str
     description: str
-    assigned_to: Optional[str] # e.g., "other_worker", "dev_team"
-    status: str # "pending", "in_progress", "completed", "failed"
+    worker: Optional[str] # e.g., "other_worker", "dev_team"
+    estimated_time: str
+    dependencies: List[str]
+    status: Optional[str] # "pending", "in_progress", "completed", "failed"
     result: Optional[str] # 任务结果
 
 class Plan(TypedDict):

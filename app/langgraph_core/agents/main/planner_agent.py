@@ -72,22 +72,49 @@ def planner_agent(state: AgentState) -> AgentState:
         # 从加载的模板动态构建系统 Prompt
         final_system_prompt = system_prompt_template.format(available_workers=available_workers_desc)
         
-        # 动态构建 ChatPromptTemplate
-        prompt_to_use = ChatPromptTemplate.from_messages([
-            ("system", final_system_prompt),
-            ("human", "{input}")
-        ])
+        # 构建包含 few-shot 示例的完整提示
+        few_shot_text = ""
+        for example in few_shot_examples:
+            few_shot_text += f"\n用户请求: {example['input']}\n"
+            # 直接使用字符串拼接，避免 JSON 格式化问题
+            steps_text = ""
+            for step in example['output']['steps']:
+                steps_text += f"  - 任务ID: {step['task_id']}, 名称: {step['task_name']}, 描述: {step['description']}, 工人: {step['worker']}, 时间: {step['estimated_time']}\n"
+            few_shot_text += f"计划输出:\n{steps_text}\n"
+        
+        complete_prompt = final_system_prompt + "\n\n示例:\n" + few_shot_text + "\n\n现在请为以下用户请求生成计划:\n"
+        
+        # 直接使用字符串格式化，避免 ChatPromptTemplate 的问题
+        formatted_prompt = complete_prompt + f"\n\n用户请求: {current_request}"
         
         llm_input = {
-            "input": current_request,
-            "messages": messages
+            "prompt": formatted_prompt
         }
 
     try:
-        # --- 2. 构建新的带解析器的 chain ---
-        parser = JsonOutputParser()
-        chain = prompt_to_use | planner_llm | parser
-        parsed_response = chain.invoke(llm_input)
+        # --- 2. 直接调用 LLM 并解析响应 ---
+        if is_revision:
+            # 对于修订场景，使用原有的 prompt_to_use
+            parser = JsonOutputParser()
+            chain = prompt_to_use | planner_llm | parser
+            parsed_response = chain.invoke(llm_input)
+        else:
+            # 对于初始计划生成，直接调用 LLM
+            response = planner_llm.invoke(llm_input["prompt"])
+            # 尝试解析 JSON 响应
+            try:
+                import re
+                # 提取 JSON 部分
+                content = response.content
+                json_match = re.search(r'\{.*\}', content, re.DOTALL)
+                if json_match:
+                    json_str = json_match.group()
+                    parsed_response = json.loads(json_str)
+                else:
+                    raise ValueError("No JSON found in response")
+            except Exception as json_error:
+                logger.error(f"Failed to parse JSON from response: {json_error}")
+                raise ValueError(f"Could not parse LLM response as JSON: {response.content}")
         
         logger.info(f"LLM parsed response: {parsed_response}")
 
@@ -110,7 +137,26 @@ def planner_agent(state: AgentState) -> AgentState:
         if not generated_subtasks:
              raise ValueError("Could not extract subtasks from LLM response.")
 
-        generated_plan: Plan = {"steps": [SubTask(**task) for task in generated_subtasks]}
+        # 为每个任务添加默认的 status 和 result 字段
+        processed_subtasks = []
+        for task in generated_subtasks:
+            if isinstance(task, dict):
+                # 确保所有必需字段都存在
+                processed_task = {
+                    "task_id": task.get("task_id", ""),
+                    "task_name": task.get("task_name", ""),
+                    "description": task.get("description", ""),
+                    "worker": task.get("worker", "other_worker"),
+                    "estimated_time": task.get("estimated_time", "1小时"),
+                    "dependencies": task.get("dependencies", []),
+                    "status": "pending",
+                    "result": None
+                }
+                processed_subtasks.append(processed_task)
+            else:
+                logger.error(f"Invalid task format: {task}")
+
+        generated_plan: Plan = {"steps": processed_subtasks}
         logger.info(f"Generated plan: {generated_plan}")
 
         return {"overall_plan": generated_plan, "current_agent_role": "supervisor", "last_agent_role": "planner"}

@@ -26,15 +26,15 @@ logger = logging.getLogger(__name__)
 def _find_subtask_by_id(plan: Dict[str, Any], task_id: str) -> Optional[Dict[str, Any]]:
     """Helper function to find a subtask dictionary by its ID in the plan."""
     for task in plan.get("steps", []):
-        if task.get("id") == task_id:
+        if task.get("task_id") == task_id:
             return task
     return None
 
 def _validate_and_correct_plan(plan: Plan) -> (Plan, bool):
     """
     校验并修正计划的合法性。
-    1. 检查每个步骤是否有 'assigned_to' 字段，如果没有则分配给兜底工人。
-    2. 检查 'assigned_to' 的值是否是已知的工人，如果不是则分配给兜底工人。
+    1. 检查每个步骤是否有 'worker' 字段，如果没有则分配给兜底工人。
+    2. 检查 'worker' 的值是否是已知的工人，如果不是则分配给兜底工人。
     返回修正后的计划和一个布尔值，表示计划是否被修正过。
     """
     was_corrected = False
@@ -49,14 +49,14 @@ def _validate_and_correct_plan(plan: Plan) -> (Plan, bool):
         return plan, False
 
     for i, task in enumerate(steps):
-        assignee = task.get("assigned_to")
+        assignee = task.get("worker")
         if not assignee:
             logger.warning(f"计划修正：第 {i+1} 步任务 '{task.get('description')}' 没有指定执行人。自动分配给 other_worker。")
-            task["assigned_to"] = "other_worker"
+            task["worker"] = "other_worker"
             was_corrected = True
         elif assignee not in available_worker_names:
             logger.warning(f"计划修正：第 {i+1} 步任务指定了不存在的工人 '{assignee}'。自动重新分配给 other_worker。")
-            task["assigned_to"] = "other_worker"
+            task["worker"] = "other_worker"
             was_corrected = True
     
     return plan, was_corrected
@@ -154,10 +154,10 @@ def supervisor_agent(state: AgentState) -> dict:
 
             if not evaluation.get("is_satisfactory", False):
                 current_revisions = state.get("task_revision_count", 0) + 1
-                logger.warning(f"Result for task '{active_task['id']}' not satisfactory. Revision count: {current_revisions}/{MAX_TASK_REVISIONS}.")
+                logger.warning(f"Result for task '{active_task['task_id']}' not satisfactory. Revision count: {current_revisions}/{MAX_TASK_REVISIONS}.")
 
                 if current_revisions > MAX_TASK_REVISIONS:
-                    logger.error(f"Maximum revisions for task '{active_task['id']}' reached. Forcibly accepting the last result.")
+                    logger.error(f"Maximum revisions for task '{active_task['task_id']}' reached. Forcibly accepting the last result.")
                     # 强制接受，标记任务为完成，然后继续
                     state["task_revision_count"] = 0 # 重置计数器
                     active_task["status"] = "completed"
@@ -171,7 +171,7 @@ def supervisor_agent(state: AgentState) -> dict:
                         "last_agent_role": "supervisor"
                     }
 
-            logger.info(f"Result for task '{active_task['id']}' is satisfactory. Resetting task revision count and marking as completed.")
+            logger.info(f"Result for task '{active_task['task_id']}' is satisfactory. Resetting task revision count and marking as completed.")
             state["task_revision_count"] = 0
             active_task["status"] = "completed"
             active_task["result"] = state.get("last_worker_result")
@@ -189,14 +189,14 @@ def supervisor_agent(state: AgentState) -> dict:
             break
 
     if next_pending_task:
-        assignee = next_pending_task.get("assigned_to")
+        assignee = next_pending_task.get("worker")
         logger.info(f"Found next pending task: '{next_pending_task['description']}'. Activating and assigning to '{assignee}'.")
         # --- 新增：分配新任务前，确保任务计数器已清零 ---
         state["task_revision_count"] = 0 
         next_pending_task["status"] = "active"
         return {
             "overall_plan": overall_plan,
-            "active_subtask_id": next_pending_task["id"],
+            "active_subtask_id": next_pending_task["task_id"],
             "task_revision_count": 0, # 显式返回清零后的状态
             "current_agent_role": assignee, # <-- 关键修改：路由到具体的工人
             "last_agent_role": "supervisor"
